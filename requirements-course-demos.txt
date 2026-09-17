@@ -1,0 +1,13 @@
+jupyterlab>=4.6,<5
+ipywidgets>=8.1,<9
+matplotlib>=3.11,<4
+numpy>=2.3,<3
+pandas>=2.2,<3
+Pillow>=12,<13
+scikit-image>=0.26,<0.27
+scikit-learn>=1.9,<2
+shap>=0.52,<0.53
+torch>=2.14,<2.15
+torchvision>=0.29,<0.30
+transformers>=5.17,<5.18
+ultralytics==8.4.155

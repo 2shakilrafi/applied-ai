@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bias–Variance Tradeoff Explorer</title>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  <style>
+    :root { --bg:#0b0c10; --panel:#111218; --ink:#e6e6e6; --sub:#a5a5a5; --accent:#6bb1ff; --accent2:#ff6b6b; }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"}
+    .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+    .card{background:var(--panel);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);overflow:hidden}
+    .row{display:flex;gap:16px;flex-wrap:wrap}
+    .col{flex:1 1 340px}
+    h1{font-size:22px;margin:0 0 12px;font-weight:700}
+    .controls{padding:16px}
+    .metric{background:#181a22;border:1px solid #242634;border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:2px;min-width:180px}
+    .metric .label{font-size:12px;color:var(--sub);letter-spacing:.02em}
+    .metric .value{font-size:22px;font-weight:700}
+    .metrics{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+    .slider-row{margin-top:8px}
+    input[type=range]{width:280px}
+    .hint{color:var(--sub);font-size:12px;margin-top:8px}
+    #plot{height:560px}
+    a{color:#9bd0ff}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row">
+      <div class="col">
+        <div class="card controls">
+          <h1>Bias–Variance Tradeoff: Linear → Polynomial Regression</h1>
+          <div class="slider-row">
+            <label for="deg"><strong>Polynomial degree</strong>: <span id="degLabel">1</span></label><br>
+            <input id="deg" type="range" min="1" max="12" step="1" value="1"/>
+          </div>
+          <div class="metrics">
+            <div class="metric"><div class="label">Estimated Bias²</div><div class="value" id="biasVal">–</div></div>
+            <div class="metric"><div class="label">Estimated Variance</div><div class="value" id="varVal">–</div></div>
+          </div>
+          <div class="hint">Gray band shows mean prediction ± one standard deviation over many re-sampled datasets. Red = true function; Blue = fit to the visible dataset; Dashed = mean prediction across resamples.</div>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col">
+        <div class="card"><div id="plot"></div></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ---------- math helpers (minimal linear algebra) ----------
+function zeros(n){return Array(n).fill(0)}
+function dot(a,b){let s=0;for(let i=0;i<a.length;i++) s+=a[i]*b[i];return s}
+function matT(A){ // transpose
+  const m=A.length, n=A[0].length; const T=Array.from({length:n},()=>Array(m).fill(0));
+  for(let i=0;i<m;i++) for(let j=0;j<n;j++) T[j][i]=A[i][j];
+  return T;
+}
+function matMul(A,B){const m=A.length,n=A[0].length,p=B[0].length;const C=Array.from({length:m},()=>Array(p).fill(0));
+  for(let i=0;i<m;i++) for(let k=0;k<n;k++){const aik=A[i][k]; for(let j=0;j<p;j++) C[i][j]+=aik*B[k][j];}
+  return C;}
+function matVec(A,v){const m=A.length,n=A[0].length;const out=zeros(m); for(let i=0;i<m;i++){let s=0;for(let j=0;j<n;j++) s+=A[i][j]*v[j]; out[i]=s;} return out}
+function solveSymPosDef(A,b){ // naive Gaussian elimination; OK for our small sizes
+  const n=A.length; A=A.map(r=>r.slice()); b=b.slice();
+  for(let i=0;i<n;i++){
+    // pivot
+    let maxRow=i; for(let k=i+1;k<n;k++) if(Math.abs(A[k][i])>Math.abs(A[maxRow][i])) maxRow=k;
+    if(maxRow!==i){[A[i],A[maxRow]]=[A[maxRow],A[i]]; [b[i],b[maxRow]]=[b[maxRow],b[i]]}
+    const pivot=A[i][i]||1e-12;
+    for(let j=i;j<n;j++) A[i][j]/=pivot; b[i]/=pivot;
+    for(let k=i+1;k<n;k++){
+      const factor=A[k][i]; if(Math.abs(factor)<1e-12) continue;
+      for(let j=i;j<n;j++) A[k][j]-=factor*A[i][j]; b[k]-=factor*b[i];
+    }
+  }
+  // back substitution
+  const x=Array(n).fill(0);
+  for(let i=n-1;i>=0;i--){let s=b[i]; for(let j=i+1;j<n;j++) s-=A[i][j]*x[j]; x[i]=s/(A[i][i]||1e-12);} return x;
+}
+
+function polyDesign(x, degree){
+  // returns Vandermonde matrix with raw powers [1, x, x^2, ..., x^d]
+  return x.map(xi=>{
+    const row=new Array(degree+1); row[0]=1; for(let d=1; d<=degree; d++) row[d]=row[d-1]*xi; return row;
+  });
+}
+
+function fitPoly(x, y, degree){
+  const X = polyDesign(x, degree);
+  const Xt = matT(X);
+  const XtX = matMul(Xt,X);
+  const Xty = matVec(Xt, y);
+  const beta = solveSymPosDef(XtX, Xty);
+  return beta; // coefficients from degree 0..d
+}
+
+function predictPoly(beta, x){
+  return x.map(xi=>{
+    let p=0, pow=1; for(let d=0; d<beta.length; d++){p += beta[d]*pow; pow*=xi;} return p;
+  })
+}
+
+// ---------- data-generating process ----------
+const fTrue = x => 0.5*Math.pow(x,3) - x; // same as R app
+const sigma = 1.0; // noise std
+
+const nTrain = 40;
+const xTrain = Array.from({length:nTrain}, (_,i)=> -3 + 6*(i/(nTrain-1))); // fixed grid for clarity
+function rng(seed){ // simple LCG for reproducible randomness
+  let s = seed >>> 0; return ()=>{ s = (1664525*s + 1013904223)>>>0; return s/2**32; };
+}
+const randn = (rngf)=>{ // Box–Muller using our RNG
+  let u=0,v=0; while(u===0) u=rngf(); while(v===0) v=rngf(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+const R = rng(42);
+const yObs = xTrain.map(x => fTrue(x) + sigma*randn(R)); // visible dataset
+
+const xGrid = Array.from({length:200}, (_,i)=> -3 + 6*(i/199));
+
+// Monte Carlo settings
+const B = 80; // resamples per degree
+
+function estimateBV(degree){
+  // Produce B fits on new noisy y (same xTrain), predict on xGrid
+  const preds = Array.from({length:B},()=>Array(xGrid.length).fill(0));
+  for(let b=0;b<B;b++){
+    const r = rng(1000 + degree*97 + b*13); // new seeded rng per run for stability
+    const yb = xTrain.map(x=> fTrue(x) + sigma*randn(r));
+    const beta = fitPoly(xTrain, yb, degree);
+    const p = predictPoly(beta, xGrid);
+    for(let i=0;i<xGrid.length;i++) preds[b][i] = p[i];
+  }
+  // mean and sd across B
+  const mean = Array(xGrid.length).fill(0);
+  const varr = Array(xGrid.length).fill(0);
+  for(let i=0;i<xGrid.length;i++){
+    let m=0; for(let b=0;b<B;b++) m+=preds[b][i]; m/=B; mean[i]=m;
+    let v=0; for(let b=0;b<B;b++){ const d=preds[b][i]-m; v+=d*d; } v/=Math.max(1,(B-1)); varr[i]=v;
+  }
+  // bias^2 and variance averaged over x
+  const fVals = xGrid.map(fTrue);
+  let bias2=0, variance=0; for(let i=0;i<xGrid.length;i++){ const d = mean[i]-fVals[i]; bias2 += d*d; variance += varr[i]; }
+  bias2/=xGrid.length; variance/=xGrid.length;
+  return {mean, varr, bias2, variance};
+}
+
+// Precompute the true function
+const yTrue = xGrid.map(fTrue);
+
+// Fit to the visible dataset for plot
+function fitVisible(degree){
+  const beta = fitPoly(xTrain, yObs, degree);
+  return predictPoly(beta, xGrid);
+}
+
+function update(degree){
+  document.getElementById('degLabel').textContent = degree;
+  const bv = estimateBV(degree);
+  const yFit = fitVisible(degree);
+
+  // Build traces
+  const pts = {
+    x: xTrain, y: yObs, mode:'markers', type:'scatter', name:'Training points',
+    marker:{size:7, color:'#d9d9d9'}, hovertemplate:'x=%{x:.2f}<br>y=%{y:.2f}<extra></extra>'
+  };
+
+  const truth = {x:xGrid, y:yTrue, mode:'lines', name:'True f(x)', line:{width:2, color:'#ff6b6b'}};
+  const fit = {x:xGrid, y:yFit, mode:'lines', name:'Fit (visible data)', line:{width:3, color:'#1f77b4'}};
+  const meanPred = {x:xGrid, y:bv.mean, mode:'lines', name:'Mean prediction', line:{width:2, dash:'dash', color:'#bbbbbb'}};
+
+  // Ribbon: mean ± sd
+  const sd = bv.varr.map(Math.sqrt);
+  const upper = bv.mean.map((m,i)=> m + sd[i]);
+  const lower = bv.mean.map((m,i)=> m - sd[i]);
+  const ribbon = {
+    x: xGrid.concat([...xGrid].reverse()),
+    y: upper.concat([...lower].reverse()),
+    fill: 'toself', fillcolor: 'rgba(200,200,200,0.18)', line:{color:'rgba(0,0,0,0)'},
+    name: 'Mean ± 1 SD', type: 'scatter'
+  };
+
+  Plotly.react('plot', [ribbon, pts, truth, meanPred, fit], {
+    margin:{l:50,r:20,t:28,b:40}, paper_bgcolor:'#111218', plot_bgcolor:'#111218',
+    xaxis:{title:'x', gridcolor:'#2a2c39', zeroline:false, color:'#ddd'},
+    yaxis:{title:'y', gridcolor:'#2a2c39', zeroline:false, color:'#ddd'},
+    legend:{orientation:'h', y:-0.18, x:0}
+  }, {responsive:true, displaylogo:false});
+
+  document.getElementById('biasVal').textContent = bv.bias2.toFixed(3);
+  document.getElementById('varVal').textContent  = bv.variance.toFixed(3);
+}
+
+// Wire up slider
+const slider = document.getElementById('deg');
+slider.addEventListener('input', e => update(parseInt(e.target.value,10)));
+
+// Initial render
+update(parseInt(slider.value,10));
+</script>
+</body>
+</html>
