@@ -1,6 +1,6 @@
 # Applied AI
 
-Runnable demonstrations for an applied-AI course. The notebooks pair models and concepts with checks, diagnostics, and limitations so the result is more than a happy-path API call. The interactive HTML explorer uses a fixed seeded simulation.
+Runnable demonstrations for an applied-AI course. The notebooks pair models and concepts with checks, diagnostics, and limitations so each one shows how the model behaves and where it fails, not just that it runs. The interactive HTML explorer uses a fixed seeded simulation.
 
 ## Demo catalog
 
@@ -46,7 +46,7 @@ jupyter lab rag.ipynb
 
 Place a licensed UTF-8 copy of Shakespeare's complete works at `data/shakespeare.txt`. The `data/` directory is intentionally ignored; review the source terms before downloading or redistributing any corpus.
 
-## Reproducibility and scope
+## Notes on reproducibility
 
 - Randomized training notebooks use explicit seeds and executable assertions; the HTML explorer uses fixed seeded simulation.
 - Executed notebooks retain plots and bounded result tables so GitHub readers can inspect the outcome without rerunning heavy models.
